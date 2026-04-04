@@ -98,7 +98,7 @@ You need accounts on these free services before starting:
 1. Click **Fork** on this GitHub repo
 2. Clone your fork:
    ```bash
-   git clone git clone https://github.com/YOUR_USERNAME/StudyBot-v1.0.git
+   git clone https://github.com/YOUR_USERNAME/StudyBot-v1.0.git
    cd studybot
    ```
 3. Update the Railway API URL in `bot.js` — find this line near the top:
