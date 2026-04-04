@@ -19,7 +19,7 @@ Built with **FastAPI**, **Discord.js**, **MongoDB Atlas**, **OpenRouter (Nemotro
 | 🧠 **Skill Profiling** | `!skills` — tracks your mastery per topic over time |
 | 📝 **Exam Tracker** | `!exams`, `!exam add CODE DATE TIME LOCATION` |
 | 📊 **Grade & ECTS Tracker** | `!grades`, `!grade CODE GRADE` (German 1.0–5.0 scale) |
-| 🔒 **Protected Time** | `!protect Monday 18:00 22:00 Girlfriend time` |
+| 🔒 **Protected Time** | `!protect Monday 18:00 22:00 Personal time` |
 | 📈 **Analytics** | `!analytics`, `!analytics 7` — study trends & mastery curves |
 | 📚 **Subject Management** | `!subjects`, `!add_subject CODE Name` — dynamic, semester-aware |
 
