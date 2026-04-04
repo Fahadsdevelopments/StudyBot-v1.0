@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+pymongo[srv]
+python-dotenv
+pydantic
+pymupdf
+python-dateutil
+python-multipart
+certifi
+httpx
+python-jose
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client

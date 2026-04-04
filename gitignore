@@ -1,0 +1,27 @@
+# Secrets - NEVER commit these
+.env
+service_account.json
+token.json
+credentials.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+venv311/
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+
+# Uploads (temporary files)
+uploads/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
