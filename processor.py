@@ -31,8 +31,8 @@ docs_collection  = db["documents"]
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-CHUNK_SIZE = 8000   # characters per Nemotron call
-CHUNK_OVERLAP = 400 # overlap between chunks
+CHUNK_SIZE    = 6000   # characters per Nemotron call (reduced for reliability)
+CHUNK_OVERLAP = 400    # overlap between chunks to avoid missing context
 
 
 # ── Text extraction ────────────────────────────────────────────
@@ -186,61 +186,73 @@ Document content:
 {text}"""
 
 
-# ── Single Nemotron call ───────────────────────────────────────
+# ── Single Nemotron call with retry on timeout ─────────────────
 def call_nemotron(prompt: str) -> dict:
-    try:
-        response = httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "http://localhost",
-                "X-Title": "Student AI Assistant"
-            },
-            json={
-                "model": "nvidia/nemotron-3-super-120b-a12b:free",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 2000,
-                "temperature": 0.2
-            },
-            timeout=90
-        )
+    for attempt in range(2):  # try twice before giving up
+        try:
+            response = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "http://localhost",
+                    "X-Title": "Student AI Assistant"
+                },
+                json={
+                    "model": "nvidia/nemotron-3-super-120b-a12b:free",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 2000,
+                    "temperature": 0.2
+                },
+                timeout=120
+            )
 
-        response_json = response.json()
+            response_json = response.json()
 
-        if "choices" not in response_json:
-            print(f"[processor] No choices in response: {response_json}")
+            if "choices" not in response_json:
+                print(f"[processor] No choices in response: {response_json}")
+                return _empty_analysis()
+
+            raw   = response_json["choices"][0]["message"]["content"]
+            start = raw.find("{")
+            end   = raw.rfind("}") + 1
+
+            if start == -1 or end == 0:
+                print("[processor] No JSON in response")
+                return _empty_analysis()
+
+            analysis = json.loads(raw[start:end])
+
+            # Normalise task fields
+            for task in analysis.get("tasks", []):
+                task["due_date"]        = parse_date_flexible(task.get("due_date"))
+                task["estimated_hours"] = float(task.get("estimated_hours") or 1)
+                task["priority"]        = int(task.get("priority") or 70)
+
+                if task.get("type") not in {"assignment","exam","quiz","reading","project","lab","other"}:
+                    task["type"] = "other"
+                if task.get("complexity") not in {"low","medium","high"}:
+                    task["complexity"] = "medium"
+
+            return analysis
+
+        except httpx.TimeoutException:
+            if attempt == 0:
+                print(f"[processor] Timeout on attempt 1 — retrying in 3 seconds...")
+                time.sleep(3)
+            else:
+                print(f"[processor] Timeout on attempt 2 — skipping chunk")
+                return _empty_analysis()
+
+        except json.JSONDecodeError as e:
+            print(f"[processor] JSON parse error: {e}")
             return _empty_analysis()
 
-        raw = response_json["choices"][0]["message"]["content"]
-        start = raw.find("{")
-        end   = raw.rfind("}") + 1
-
-        if start == -1 or end == 0:
-            print("[processor] No JSON in response")
+        except Exception as e:
+            print(f"[processor] Nemotron error: {e}")
             return _empty_analysis()
 
-        analysis = json.loads(raw[start:end])
-
-        # Normalise task fields
-        for task in analysis.get("tasks", []):
-            task["due_date"]        = parse_date_flexible(task.get("due_date"))
-            task["estimated_hours"] = float(task.get("estimated_hours") or 1)
-            task["priority"]        = int(task.get("priority") or 70)
-
-            if task.get("type") not in {"assignment","exam","quiz","reading","project","lab","other"}:
-                task["type"] = "other"
-            if task.get("complexity") not in {"low","medium","high"}:
-                task["complexity"] = "medium"
-
-        return analysis
-
-    except json.JSONDecodeError as e:
-        print(f"[processor] JSON parse error: {e}")
-        return _empty_analysis()
-    except Exception as e:
-        print(f"[processor] Nemotron error: {e}")
-        return _empty_analysis()
+    return _empty_analysis()
 
 
 # ── Chunked analysis for large documents ──────────────────────
@@ -282,12 +294,12 @@ def analyze_document(text: str, filename: str, doc_type: str,
         if result.get("summary") and "Could not" not in result["summary"]:
             summaries.append(result["summary"])
 
-        # Small delay between chunks to avoid rate limiting
+        # Delay between chunks to avoid rate limiting
         if i < total_chunks - 1:
-            time.sleep(1)
+            time.sleep(2)
 
     # Deduplicate tasks by title
-    seen    = set()
+    seen         = set()
     unique_tasks = []
     for task in all_tasks:
         key = task["title"].lower().strip()[:40]
@@ -304,11 +316,11 @@ def analyze_document(text: str, filename: str, doc_type: str,
         final_summary = "Document analyzed automatically."
 
     return {
-        "summary":              final_summary,
-        "topics":               list(all_topics),
-        "key_concepts":         list(set(all_concepts)),
-        "tasks":                unique_tasks,
-        "question_types":       [],
+        "summary":               final_summary,
+        "topics":                list(all_topics),
+        "key_concepts":          list(set(all_concepts)),
+        "tasks":                 unique_tasks,
+        "question_types":        [],
         "high_frequency_topics": []
     }
 
@@ -324,19 +336,19 @@ def save_to_mongodb(filename: str, analysis: dict,
                     course_code: str = None) -> tuple:
 
     doc_record = {
-        "filename":   filename,
-        "doc_type":   doc_type,
+        "filename":    filename,
+        "doc_type":    doc_type,
         "course_code": course_code,
-        "topics":     analysis.get("topics", []),
-        "summary":    analysis.get("summary", ""),
-        "task_count": len(analysis.get("tasks", [])),
+        "topics":      analysis.get("topics", []),
+        "summary":     analysis.get("summary", ""),
+        "task_count":  len(analysis.get("tasks", [])),
         "uploaded_at": datetime.utcnow()
     }
 
     if doc_type == "lecture_slides":
         doc_record["key_concepts"] = analysis.get("key_concepts", [])
     elif doc_type == "past_paper":
-        doc_record["question_types"]       = analysis.get("question_types", [])
+        doc_record["question_types"]        = analysis.get("question_types", [])
         doc_record["high_frequency_topics"] = analysis.get("high_frequency_topics", [])
 
     doc_id = docs_collection.insert_one(doc_record).inserted_id
@@ -389,12 +401,12 @@ def process_pdf(pdf_path: str, filename: str,
     print(f"[processor] Saved — doc_id: {doc_id}")
 
     return {
-        "success":    True,
-        "doc_id":     doc_id,
-        "filename":   filename,
-        "doc_type":   doc_type,
-        "summary":    analysis.get("summary", ""),
-        "topics":     analysis.get("topics", []),
+        "success":     True,
+        "doc_id":      doc_id,
+        "filename":    filename,
+        "doc_type":    doc_type,
+        "summary":     analysis.get("summary", ""),
+        "topics":      analysis.get("topics", []),
         "tasks_found": len(saved_tasks),
-        "tasks":      saved_tasks
+        "tasks":       saved_tasks
     }
